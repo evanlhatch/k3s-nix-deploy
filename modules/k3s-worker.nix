@@ -1,61 +1,86 @@
 # ./modules/k3s-worker.nix
+# Defines a COMPLETE minimal K3s Worker (Agent) node.
 # Takes specialArgs: hostName, k3sControlPlaneAddr
-# Also receives pkgs, lib, config from the NixOS module system implicitly
-{ config, pkgs, lib, specialArgs, ... }: # <<< Ensure 'pkgs' is here
+{ config, pkgs, lib, specialArgs, ... }:
 
 { # Start of the single, top-level attribute set
 
+  # --- Base System Settings ---
+  system.stateVersion = "24.11"; # Or your preferred version
+  time.timeZone = "Etc/UTC"; # Set your timezone
+  i18n.defaultLocale = "en_US.UTF-8";
+  console.keyMap = "us";
+  networking.useDHCP = lib.mkDefault true; # Assumes DHCP provides connectivity
+
+  # SSH Daemon configuration
+  services.openssh = {
+    enable = true;
+    settings = {
+      PermitRootLogin = "prohibit-password"; # Or "yes" if needed for initial deploy
+      PasswordAuthentication = false;
+    };
+  };
+  # Add your SSH public key for root access if deploying as root
+  users.users.root.openssh.authorizedKeys.keys = [
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI..." # <<< ADD YOUR PUBLIC KEY HERE
+  ];
+
+  # Base packages + K8s tools
+  environment.systemPackages = with pkgs; [
+    git vim curl wget htop tmux tailscale kubectl
+  ];
+
+  # Firewall base enablement (rules added below and by other modules)
+  networking.firewall.enable = true;
+  # -----------------------------------------------------
+
   # --- Worker Specific Settings ---
   networking.hostName = specialArgs.hostName;
+
+  # --- Tailscale Configuration ---
+  services.tailscale = {
+    enable = true;
+    # For production, use authKeyFile = "/run/secrets/tailscale.key";
+    # For testing, we'll use manual authentication
+    # authKeyFile = "/run/secrets/tailscale.key";
+    extraUpFlags = [ "--ssh" "--accept-routes" "--accept-dns=true" ];
+  };
+  services.resolved = {
+    enable = true; # Ensure resolved is enabled for --accept-dns
+    domains = [ "~cinnimon-galaxy.ts.net" ]; # <<< CHANGE TAILNET NAME
+  };
+
+  # --- K3s Worker Configuration ---
   services.k3s = {
     enable = true;
     role = "agent";
     serverAddr = "https://${specialArgs.k3sControlPlaneAddr}:6443";
-    tokenFile = ../secrets/k3s.token;
-  };
-
-  # --- Tailscale Configuration (Directly Added) ---
-  services.tailscale = {
-    enable = true;
-    # authKeyFile = ../secrets/tailscale.key; # Handle later
-    extraUpFlags = [
-        "--ssh"             # Enable Tailscale SSH server
-        "--accept-routes"   # Accept routes from other nodes
-        "--accept-dns=true" # Use Tailscale DNS settings
-     ];
-  };
-  services.resolved = {
-    enable = true; # Ensure resolved is enabled for --accept-dns
-    domains = [ "~cinnamon-galaxy.ts.net" ]; # <<< CHANGE TAILNET NAME
+    # For production, use tokenFile = "/run/secrets/k3s.token";
+    # For testing, we'll use a dummy token
+    token = "dummy-token"; # Using a dummy token for testing
   };
 
   # --- Consolidated Firewall Settings ---
   networking.firewall = {
-    enable = true;
+    # enable = true; # Already enabled above
     allowedUDPPorts = lib.mkMerge [
       [ 8472 ]                              # K3s Flannel port
       [ config.services.tailscale.port ]    # Tailscale port
     ];
     trustedInterfaces = [ "tailscale0" ];
     checkReversePath = "loose";
+    # allowedTCPPorts = [ 10250 ]; # Optional Kubelet port
   };
   # ------------------------------------
 
-  # --- Define System Packages ONCE ---
-  environment.systemPackages = with pkgs; [ # Uses 'pkgs' from arguments
-    git vim curl wget htop tmux tailscale kubectl
-  ];
-
   # --- Minimal Filesystem Entry (Dummy for Evaluation) ---
-fileSystems."/" = {
-  # Provide a dummy device path to satisfy the evaluation check.
-  # This value is NOT used for mounting during deploy-rs activation.
-  device = "/dev/null"; # Or "/dev/dummy-device", etc.
-  # fsType = "auto"; # You can optionally add fsType too if needed
-};
+  fileSystems."/" = {
+    device = "/dev/null"; # Dummy device to satisfy Nix check
+  };
   # -----------------------------------------------------
 
   # --- Bootloader Configuration ---
+  # Ensure this matches the ACTUAL bootloader setup on the target worker machines
   boot.loader.grub = { # Assuming GRUB on /dev/sda
     enable = true;
     device = "/dev/sda"; # <<< VERIFY this device for workers
@@ -64,24 +89,5 @@ fileSystems."/" = {
   };
   boot.loader.systemd-boot.enable = false;
   boot.loader.efi.canTouchEfiVariables = false;
-
-  # --- Other Base Settings ---
-  system.stateVersion = "24.11"; # Or your preferred version
-  time.timeZone = "America/Denver";
-  i18n.defaultLocale = "en_US.UTF-8";
-  console.keyMap = "us";
-  networking.useDHCP = lib.mkDefault true;
-
-  services.openssh = {
-    enable = true;
-    settings = {
-      PermitRootLogin = "prohibit-password";
-      PasswordAuthentication = false;
-    };
-  };
-  users.users.root.openssh.authorizedKeys.keys = [
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI..." # <<< ADD YOUR PUBLIC KEY HERE
-  ];
-
 
 } # End of the single, top-level attribute set
