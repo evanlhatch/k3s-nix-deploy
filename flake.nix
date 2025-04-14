@@ -45,11 +45,21 @@
     # --- Helper Function to Create Worker Configs ---
     mkWorkerConfig = hostName: lib.nixosSystem {
       inherit system;
-      specialArgs = { inherit hostName k3sControlPlaneAddr pkgs lib disko; };
+      specialArgs = {
+        inherit hostName k3sControlPlaneAddr pkgs lib disko;
+      };
       modules = [
-        ./modules/k3s-worker.nix
-        disko.nixosModules.disko
+        # The COMPLETE worker configuration module
+        ./modules/k3s-worker.nix # Defines base settings internally now
+
+        # --- Add this line back if missing ---
+        # Include Tailscale module (k3s-worker.nix enables it)
         ./modules/tailscale.nix
+        # ------------------------------------
+
+        # Include Disko module (k3s-worker.nix defines the layout)
+        disko.nixosModules.disko
+
         # sops-nix integration later...
       ];
     };

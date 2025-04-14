@@ -1,53 +1,45 @@
 # ./modules/k3s-worker.nix
 # Takes specialArgs: hostName, k3sControlPlaneAddr
+# ASSUMES DEPLOYING TO AN EXISTING NIXOS SYSTEM
 { config, lib, pkgs, specialArgs, ... }:
 
 { # Start of the single, top-level attribute set
-
-  # All base settings are now defined directly in this file
 
   # --- Settings defined DIRECTLY at the top level ---
 
   networking.hostName = specialArgs.hostName;
 
-  # Tailscale is enabled via the tailscale.nix module
+  networking.tailscale.enable = true; # Enable the Tailscale module
 
   services.k3s = {
     enable = true; # Enable the K3s service itself
     role = "agent";
     serverAddr = "https://${specialArgs.k3sControlPlaneAddr}:6443";
-    # For production, use tokenFile = "/run/secrets/k3s.token";
-    # For testing, we'll use a dummy token
-    token = "dummy-token";
-    # extraFlags = toString [ "--node-label=foo=bar" ];
+    tokenFile = ../secrets/k3s.token; # Reference fetched secret
   };
 
   networking.firewall = {
     enable = true; # Explicitly enable firewall
-    # allowedTCPPorts = [ 10250 ];
     allowedUDPPorts = [ 8472 ]; # Flannel VXLAN
   };
 
-  # --- Disk Configuration (using Disko) ---
-  disko.devices = {
-    disk = {
-      main = {
-        type = "disk";
-        device = "/dev/sda"; # <<< IMPORTANT: VERIFY/CHANGE this device path!
-        content = {
-          type = "gpt";
-          partitions = {
-            ESP = { type = "EF00"; size = "512M"; content = { type = "filesystem"; format = "vfat"; mountpoint = "/boot"; }; };
-            root = { size = "100%"; content = { type = "filesystem"; format = "ext4"; mountpoint = "/"; }; };
-          };
-        };
-      };
-    };
-  };
+  # --- fileSystems block REMOVED ---
+  # Activation via deploy-rs/nixos-rebuild assumes target system already has mounted filesystems.
 
-  # --- Bootloader Configuration ---
-  boot.loader.systemd-boot.enable = true;
-  boot.loader.efi.canTouchEfiVariables = true;
+  # --- Bootloader Configuration - MUST be kept and MATCH target system ---
+  # Assuming target uses GRUB on /dev/sda (common for Hetzner BIOS installs)
+  # CHANGE THIS if target uses systemd-boot or different device!
+  boot.loader = {
+    grub = {
+      enable = true;
+      device = "/dev/sda";  # Install GRUB updates to the correct disk
+      useOSProber = false;
+      gfxpayloadBios = "text"; # Often needed for Hetzner BIOS/GPT
+    };
+    # Ensure systemd-boot is disabled if using GRUB
+    systemd-boot.enable = false;
+    efi.canTouchEfiVariables = false; # Not needed for BIOS/GRUB
+  };
 
   # --- Base System Configuration ---
   time.timeZone = "America/Denver"; # Set your timezone
@@ -59,9 +51,6 @@
     vim wget curl git htop tmux kubectl
   ];
 
-  virtualisation.libvirtd.enable = true;
-  users.users.root.extraGroups = [ "libvirt" ];
-
   services.openssh = {
     enable = true;
     settings = {
@@ -69,7 +58,7 @@
       PasswordAuthentication = false;
     };
   };
-  
+
   # Add your SSH public key for root access if deploying as root
   users.users.root.openssh.authorizedKeys.keys = [
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI..." # <<< ADD YOUR PUBLIC KEY HERE
