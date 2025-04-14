@@ -1,0 +1,14 @@
+# Ignore secrets directory
+/secrets/
+
+# Common Nix-related files to ignore
+result
+result-*
+.direnv/
+.envrc
+
+# Common editor/system files to ignore
+.DS_Store
+.vscode/
+*.swp
+*~
