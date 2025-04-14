@@ -16,50 +16,47 @@
   let
     system = "x86_64-linux"; # Or "aarch64-linux"
     lib = nixpkgs.lib;
-    pkgs = import nixpkgs { # Make pkgs accessible if needed
+    # Define pkgs ONCE in the outer let block
+    pkgs = import nixpkgs {
       inherit system;
       config = { allowUnfree = true; };
     };
 
     # --- Define Logical Hostnames (Matching Tailscale Names) ---
-    # These names MUST match the keys used in the Justfile deploy/build commands AND Tailscale hostnames
     controlPlaneName = "thinkpad-nixos"; # Tailscale name of the control plane
     workerNames = [ "hetzner-1" "auslander-nixos" ]; # Tailscale names of the workers
 
     # --- Define Control Plane Address (using Tailscale FQDN is recommended) ---
-    # This is how workers find the K3s API server. Replace 'YOUR-TAILNET' below.
-    k3sControlPlaneAddr = "${controlPlaneName}.cinnimon-galaxy.ts.net"; # <<< IMPORTANT: SET YOUR TAILNET NAME
+    # Replace 'cinnimon-galaxy' with your actual tailnet name.
+    k3sControlPlaneAddr = "${controlPlaneName}.cinnimon-galaxy.ts.net"; # <<< VERIFY/SET YOUR TAILNET NAME
 
     # --- Helper Function to Create Control Plane Config ---
+    # pkgs is inherited from the outer let block
     mkControlConfig = hostName: lib.nixosSystem {
       inherit system;
-      specialArgs = { inherit hostName pkgs lib disko; };
+      # REMOVED 'pkgs' from specialArgs
+      specialArgs = { inherit hostName lib disko; };
       modules = [
         ./modules/k3s-control.nix
+        # Keep disko module import ONLY if k3s-control.nix uses disko.devices
         disko.nixosModules.disko
-        ./modules/tailscale.nix
-        # sops-nix.nixosModules.sops # For later
+        # sops-nix...
       ];
     };
 
     # --- Helper Function to Create Worker Configs ---
+    # pkgs is inherited from the outer let block
     mkWorkerConfig = hostName: lib.nixosSystem {
       inherit system;
+      # REMOVED 'pkgs' and 'disko' from specialArgs
       specialArgs = {
-        inherit hostName k3sControlPlaneAddr pkgs lib disko;
+        inherit hostName k3sControlPlaneAddr lib;
       };
       modules = [
         # The COMPLETE worker configuration module
         ./modules/k3s-worker.nix # Defines base settings internally now
-
-        # --- Add this line back if missing ---
-        # Include Tailscale module (k3s-worker.nix enables it)
-        ./modules/tailscale.nix
-        # ------------------------------------
-
-        # Include Disko module (k3s-worker.nix defines the layout)
-        disko.nixosModules.disko
-
+        # No disko module import
+        # No tailscale module import (handled within k3s-worker.nix)
         # sops-nix integration later...
       ];
     };
@@ -76,31 +73,19 @@
     # Deploy-rs Configuration
     deploy = {
       autoRollback = true;
-      # Nodes keyed by Tailscale name
       nodes =
-        # --- Control Plane Target ---
-        { "${controlPlaneName}" = {
-             # Hostname here is now just a logical placeholder, Tailscale name resolution is key
-             hostname = controlPlaneName;
-             # SSH User is still needed for the connection override from Justfile
+        { "${controlPlaneName}" = { # Control Plane Target
+             hostname = controlPlaneName; # Placeholder
              sshUser = "root"; # Placeholder
-             fastConnection = true; # Assume Tailscale connection is fast
-             profiles.system = {
-               user = "root"; # User for nixos-rebuild switch
-               path = deploy-rs.lib.${system}.activate.nixos self.nixosConfigurations."${controlPlaneName}";
-             };
+             fastConnection = true;
+             profiles.system = { user = "root"; path = deploy-rs.lib.${system}.activate.nixos self.nixosConfigurations."${controlPlaneName}"; };
            };
-        } //
-        # --- Worker Targets (Generated) ---
-        (lib.genAttrs workerNames (name: {
-           hostname = name; # Placeholder
-           sshUser = "root"; # Placeholder
-           fastConnection = true;
-           profiles.system = {
-             user = "root";
-             path = deploy-rs.lib.${system}.activate.nixos self.nixosConfigurations."${name}";
-           };
-         }));
+        } // (lib.genAttrs workerNames (name: { # Worker Targets
+             hostname = name; # Placeholder
+             sshUser = "root"; # Placeholder
+             fastConnection = true;
+             profiles.system = { user = "root"; path = deploy-rs.lib.${system}.activate.nixos self.nixosConfigurations."${name}"; };
+           }));
     };
 
     # Expose deploy-rs lib and checks
